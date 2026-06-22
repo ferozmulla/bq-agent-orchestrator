@@ -1,0 +1,60 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "nba_mvp_query",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Who was the MVP of the 2023-24 NBA season?"}]
+      }
+    },
+    {
+      "eval_case_id": "nba_player_stats_query",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "How many points and assists did LeBron James average last season?"}]
+      }
+    },
+    {
+      "eval_case_id": "nba_team_stats_query",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Can you show me the team standings for the NBA Eastern Conference?"}]
+      }
+    },
+    {
+      "eval_case_id": "mlb_fan_sentiment_query",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "What is the fan sentiment for the Portland Picklers club?"}]
+      }
+    },
+    {
+      "eval_case_id": "mlb_stadium_experience_query",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Tell me about the stadium experience and food options at the Picklers ballpark."}]
+      }
+    },
+    {
+      "eval_case_id": "mlb_club_engagement_query",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "How is the club engaging with fans in Portland this season?"}]
+      }
+    },
+    {
+      "eval_case_id": "out_of_domain_weather",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "What is the weather in San Francisco today?"}]
+      }
+    },
+    {
+      "eval_case_id": "out_of_domain_recipe",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Can you give me a recipe for chocolate chip cookies?"}]
+      }
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+metrics_to_run:
+  - sports_routing_and_rejection_quality
+
+custom_metrics:
+  - name: sports_routing_and_rejection_quality
+    prompt_template: |
+      You are an expert quality assurance evaluator. Your job is to strictly grade the BQ Orchestrator agent's routing accuracy and out-of-domain rejection behavior.
+
+      ### System Specifications & Rules to Enforce:
+      1. **NBA Player Stats Routing**:
+         - Queries about NBA player stats, scoring, assists, standings, etc., must be delegated/routed to the `nba_player_stats` sub-agent.
+         - Look at the `Full Agent Trace` to verify the orchestrator transferred/delegated the call to the `nba_player_stats` agent.
+      2. **MLB Fan Experience Routing**:
+         - Queries about MLB clubs, fan sentiment, stadium experience, attendance, etc., must be delegated/routed to the `mlb_fan_experience` sub-agent.
+         - Look at the `Full Agent Trace` to verify the orchestrator transferred/delegated the call to the `mlb_fan_experience` agent.
+      3. **Out-of-Domain Rejection**:
+         - If the query is NOT related to NBA Player Stats or MLB Fan Experience (e.g., weather, recipes, general knowledge, other sports), the agent MUST decline immediately.
+         - The final response MUST BE EXACTLY:
+           "The agents do not have context to respond to this question. Please ask about NBA Player stats or MLB Club Fan experience"
+         - There must be **absolutely no extra text, explanations, pleasantries, or preamble**. It must match the string exactly.
+      4. **No Direct Execution**:
+         - The Orchestrator must not try to answer sports queries itself; it must delegate to the sub-agents.
+
+      ### Grading Rubric:
+      - **Score 5 (Pass)**: 
+        - The query was correctly routed to the appropriate sub-agent (NBA or MLB), OR
+        - The query was out-of-domain and the agent responded with the EXACT rejection string without any other text.
+      - **Score 1 (Fail)**:
+        - The agent routed to the wrong sub-agent (e.g., NBA query sent to MLB).
+        - The agent failed to delegate a sport query and tried to answer it directly.
+        - The agent failed to reject an out-of-domain query.
+        - The agent rejected an out-of-domain query but did not use the exact string, or added extra text (e.g., "I'm sorry, but...", "Hello! The agents do not...").
+
+      ### Target Evaluation:
+      User Prompt: {prompt}
+      Final Response: {response}
+      Full Agent Trace: {agent_data}
+
+      Return your evaluation as a valid JSON object matching this structure:
+      {
+        "score": <1 or 5>,
+        "explanation": "<detailed explanation of whether the agent followed the routing/rejection rules and matched the expected behavior>"
+      }
