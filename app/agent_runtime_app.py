@@ -119,7 +119,24 @@ class AgentEngineApp(A2aAgent):
         """Initialize the agent engine app with logging and telemetry."""
         vertexai.init()
         setup_telemetry()
+        
+        # Run parent setup to instantiate all adapters and handlers
         super().set_up()
+        
+        # Dynamically resolve and overwrite the A2A URL with the real deployed cloud URL!
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("VERTEX_AI_PROJECT_ID")
+        location = "us-east1"
+        agent_engine_id = os.environ.get("VERTEX_AI_REASONING_ENGINE_ID") or os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_ID")
+        
+        if project and agent_engine_id:
+            real_url = f"https://{location}-aiplatform.googleapis.com/v1beta1/projects/{project}/locations/{location}/reasoningEngines/{agent_engine_id}/a2a"
+            self.agent_card.url = real_url
+            if hasattr(self, "a2a_rest_adapter") and self.a2a_rest_adapter:
+                self.a2a_rest_adapter.agent_card.url = real_url
+            if hasattr(self, "rest_handler") and self.rest_handler:
+                self.rest_handler.agent_card.url = real_url
+            logging.info(f"🐒 Dynamically injected secure A2A URL: {real_url}")
+            
         logging.basicConfig(level=logging.INFO)
         logging_client = google_cloud_logging.Client()
         self.logger = logging_client.logger(__name__)

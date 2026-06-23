@@ -33,6 +33,31 @@ from google.adk.agents.invocation_context import InvocationContext
 from a2a.types import Message as A2AMessage
 from google.adk.events.event import Event
 
+# Monkeypatch ADK AgentCardBuilder to clean sub-agent skill names (no spaces or colons allowed!)
+import google.adk.a2a.utils.agent_card_builder as card_builder
+original_build_sub_agent_skills = card_builder._build_sub_agent_skills
+
+async def my_build_sub_agent_skills(agent):
+    skills = await original_build_sub_agent_skills(agent)
+    cleaned_skills = []
+    for skill in skills:
+        from a2a.types import AgentSkill
+        cleaned_skill = AgentSkill(
+            id=skill.id,
+            name=skill.name.replace(": ", "_").replace(":", "_").replace(" ", "_"),
+            description=skill.description,
+            examples=skill.examples,
+            input_modes=skill.input_modes,
+            output_modes=skill.output_modes,
+            tags=skill.tags
+        )
+        cleaned_skills.append(cleaned_skill)
+    return cleaned_skills
+
+card_builder._build_sub_agent_skills = my_build_sub_agent_skills
+logging.warning("🐒 Applied A2A AgentCardBuilder skill name monkeypatch successfully!")
+
+
 # Configure logging for the agent
 logger = logging.getLogger("bq_orchestrator_agent")
 logger.setLevel(logging.WARNING)
