@@ -98,13 +98,14 @@ logger.warning("🐒 Applied A2A Task Converter monkeypatch successfully!")
 # 🐒 -------------------------------------- 🐒
 
 def get_authenticated_client() -> httpx.AsyncClient:
-    """Helper to construct an authenticated httpx.AsyncClient for local testing.
+    """Helper to construct an authenticated httpx.AsyncClient for both local testing and production.
     
-    Dynamically fetches the active gcloud access token to authenticate A2A calls.
+    1. Local: Dynamically fetches the active gcloud access token.
+    2. Production: Dynamically fetches the Application Default Credentials (ADC) token.
     """
     headers = {}
     try:
-        # Dynamically fetch active gcloud token
+        # Local development check: fetch token via gcloud CLI
         token = subprocess.check_output(
             ["gcloud", "auth", "print-access-token"], 
             text=True, 
@@ -112,10 +113,59 @@ def get_authenticated_client() -> httpx.AsyncClient:
         ).strip()
         headers["Authorization"] = f"Bearer {token}"
     except Exception:
-        # Fallback for production or when gcloud is not authenticated
-        pass
+        # Production/Agent Runtime check: fetch token via official Google Auth ADC libraries
+        try:
+            import google.auth.transport.requests
+            credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            auth_request = google.auth.transport.requests.Request()
+            credentials.refresh(auth_request)
+            if credentials.token:
+                headers["Authorization"] = f"Bearer {credentials.token}"
+        except Exception as e:
+            logger.warning(f"Failed to fetch production Application Default Credentials: {e}")
 
     return httpx.AsyncClient(headers=headers, timeout=600.0)
+
+def load_agent_card(path_or_json: str) -> Any:
+    """Helper to load agent card from a local path, a GCS path, or a raw JSON string.
+    
+    Provides 100% production flexibility:
+    - Dev: Reads relative local files.
+    - Prod/CI: Reads GCS URIs or direct JSON strings from Secret Manager.
+    """
+    if not path_or_json:
+        raise ValueError("Agent card path or content is empty.")
+    
+    import json
+    from a2a.types import AgentCard
+    
+    card_dict = None
+    
+    # Case 1: Raw JSON string
+    if path_or_json.strip().startswith("{"):
+        card_dict = json.loads(path_or_json)
+        
+    # Case 2: Google Cloud Storage path (starts with gs://)
+    elif path_or_json.startswith("gs://"):
+        from google.cloud import storage
+        client = storage.Client()
+        bucket_name = path_or_json[5:].split("/")[0]
+        blob_name = "/".join(path_or_json[5:].split("/")[1:])
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        card_dict = json.loads(blob.download_as_text())
+        
+    # Case 3: Local file path
+    else:
+        resolved_path = path_or_json
+        if not os.path.isabs(resolved_path):
+            resolved_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", path_or_json))
+        with open(resolved_path, "r") as f:
+            card_dict = json.load(f)
+            
+    return AgentCard.model_validate(card_dict)
 
 # Build the client for local A2A call authentication
 local_client = get_authenticated_client()
@@ -262,7 +312,7 @@ remote_agent_config = A2aRemoteAgentConfig(
 mlb_agent = RemoteA2aAgent(
     name="mlb_fan_experience",
     description="Conversational Analytics Agent for MLB Fan Experience. Handles analytical questions about MLB clubs, fan sentiment, stadium experience, attendance, and club engagement.",
-    agent_card=mlb_agent_card_path,
+    agent_card=load_agent_card(mlb_agent_card_path),
     httpx_client=local_client,
     config=remote_agent_config,
 )
@@ -271,7 +321,7 @@ mlb_agent = RemoteA2aAgent(
 nba_agent = RemoteA2aAgent(
     name="nba_player_stats",
     description="Conversational Analytics Agent for NBA Player Stats. Handles analytical questions about NBA players, their performance, scoring, rebounds, assists, and game statistics.",
-    agent_card=nba_agent_card_path,
+    agent_card=load_agent_card(nba_agent_card_path),
     httpx_client=local_client,
     config=remote_agent_config,
 )

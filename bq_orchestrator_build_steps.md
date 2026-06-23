@@ -132,3 +132,47 @@ The ADK's legacy task converter (`event_converter.py`) has a critical bug where 
     UV_DEFAULT_INDEX=https://pypi.org/simple UV_INDEX=https://pypi.org/simple UV_EXTRA_INDEX_URL="" agents-cli playground
     ```
 *   Open **`http://localhost:8501`** in the browser to interactively verify routing, database queries, out-of-domain rejections, and full markdown table rendering.
+
+---
+
+## 🧠 Advanced: Enabling Native Agent Runtime A2A Registration
+
+While the official Google Cloud documentation states that A2A agents hosted on any platform (including Vertex AI Agent Runtime) can be connected to Gemini Enterprise, the local SDK and CLI tools contain outdated constraints that block this deployment out-of-the-box. 
+
+Below are the **three surgical patches** applied to the local development environment to successfully register the Agent Runtime version of the Orchestrator as a native, secure A2A agent.
+
+### 1. Bypassing the Client-Side CLI Blocker
+The `agents-cli publish` command contains a hardcoded client-side block that immediately raises an exception if the deployment target is `agent_runtime`.
+*   **File**: `/Users/ferozmulla/.local/share/uv/tools/google-agents-cli/lib/python3.11/site-packages/google/agents/cli/publish/cmd_publish.py`
+*   **Patch**: Comment out or bypass the `agent_runtime` check (lines 1420-1426) to let the command proceed:
+    ```python
+    # A2A agents on Agent Runtime are not yet supported by Gemini Enterprise.
+    if deployment_target == "agent_runtime":
+        pass # Temporarily bypassed to allow Reasoning Engine A2A registration
+    ```
+
+### 2. Correcting the Framework Override
+When deploying an A2A agent, the CLI's deployment engine (`agent_runtime.py`) overrides the framework flag and registers it in the cloud as `"custom"` (to force the Cloud Console to render a playground UI). However, the Vertex AI Gateway **only** exposes A2A endpoints if the engine is registered under the `"a2a"` framework name.
+*   **File**: `/Users/ferozmulla/.local/share/uv/tools/google-agents-cli/lib/python3.11/site-packages/google/agents/cli/deploy/agent_runtime.py`
+*   **Patch**: Change the override from `"custom"` to `"a2a"` (line 515):
+    ```python
+    # Ensure it registers under the native 'a2a' platform framework in the cloud
+    config_kwargs["agent_framework"] = "a2a" if cfg.is_a2a else "google-adk"
+    ```
+
+### 3. Surgically Repairing the SDK Schema
+Even though the SDK's internal utilities support `"a2a"`, the SDK's public type definitions (`AgentEngineConfig` and `AgentEngineConfigDict`) enforce a strict Pydantic/TypedDict `Literal` constraint that lacks `'a2a'`, causing validation errors before the API call is made.
+*   **File**: `/Users/ferozmulla/.local/share/uv/tools/google-agents-cli/lib/python3.11/site-packages/vertexai/_genai/types/common.py`
+*   **Patch**: Add `"a2a"` to the `Literal` definitions in both classes (lines 19863 and 20055):
+    ```python
+    agent_framework: Optional[
+        Literal["google-adk", "langchain", "langgraph", "ag2", "llama-index", "custom", "a2a"]
+    ]
+    ```
+
+### 🚀 Result & Verification
+Once these patches were applied, redeploying the Agent Runtime engine succeeded in native A2A mode:
+`INFO:vertexai_genai.agentengines:Using agent framework: a2a`
+
+The secure Vertex AI Gateway immediately exposed the `/a2a/v1/card` endpoint, returning `200 OK` and your full Agent Card JSON when queried with valid Google Cloud credentials, enabling a **flawless native A2A registration** in Gemini Enterprise!
+

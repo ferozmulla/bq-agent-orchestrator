@@ -19,7 +19,7 @@ import google.auth
 from a2a.server.apps import A2AFastAPIApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard
+from a2a.types import AgentCapabilities, AgentCard, AgentExtension
 from a2a.utils.constants import (
     AGENT_CARD_WELL_KNOWN_PATH,
     EXTENDED_AGENT_CARD_PATH,
@@ -56,7 +56,8 @@ runner = Runner(
 )
 
 request_handler = DefaultRequestHandler(
-    agent_executor=A2aAgentExecutor(runner=runner), task_store=InMemoryTaskStore()
+    agent_executor=A2aAgentExecutor(runner=runner),
+    task_store=InMemoryTaskStore(),
 )
 
 A2A_RPC_PATH = f"/a2a/{adk_app.name}"
@@ -66,7 +67,15 @@ async def build_dynamic_agent_card() -> AgentCard:
     """Builds the Agent Card dynamically from the root_agent."""
     agent_card_builder = AgentCardBuilder(
         agent=adk_app.root_agent,
-        capabilities=AgentCapabilities(streaming=True),
+        capabilities=AgentCapabilities(
+            streaming=True,
+            extensions=[
+                AgentExtension(
+                    uri="https://google.github.io/adk-docs/a2a/a2a-extension/",
+                    description="Ability to use the new agent executor implementation",
+                ),
+            ],
+        ),
         rpc_url=f"{os.getenv('APP_URL', 'http://0.0.0.0:8000')}{A2A_RPC_PATH}",
         agent_version=os.getenv("AGENT_VERSION", "0.1.0"),
     )
