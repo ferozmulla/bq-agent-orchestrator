@@ -42,23 +42,55 @@ During package synchronization (`uv sync`), the corporate machine was locked to 
     UV_DEFAULT_INDEX=https://pypi.org/simple UV_INDEX=https://pypi.org/simple UV_EXTRA_INDEX_URL="" <command>
     ```
 
-### 3. Implementing Local A2A Authentication
-Downstream Google Conversational Analytics endpoints (`geminidataanalytics.googleapis.com`) require valid OAuth 2.0 authentication. During local testing in the playground or evaluation suite, we must inject the developer's credentials.
-*   **Dynamic Access Token Fetching**: In `app/agent.py`, implement a self-authenticating helper function that calls `gcloud` to fetch the developer's active OAuth token and binds it to the HTTP client:
+### 3. Implementing Self-Refreshing, Production-Grade Authentication
+Downstream Google Conversational Analytics endpoints (`geminidataanalytics.googleapis.com`) require valid OAuth 2.0 authentication. 
+
+*   **The Static Token Expiration Bug**: Initially, we fetched a token once at module startup (via `gcloud` locally or `google.auth` in production) and bound it to a static HTTP client. While this worked initially, Google OAuth tokens expire after **exactly 1 hour**. On long-running container lifecycles in Cloud Run, this caused the static token to expire, permanently blocking all subsequent downstream calls with an **`HTTP 401 Unauthorized`** error.
+*   **The Solution (Self-Refreshing `httpx.Auth`)**: We implemented a custom **`GoogleAuth`** class using HTTPX's native authentication flow. Instead of caching a token once, `GoogleAuth` intercepts every outgoing request, checks if the token is valid, dynamically refreshes it using `gcloud` (local dev) or the official `google-auth` libraries (production Cloud Run metadata server), and signs the request on-the-fly:
     ```python
-    def get_authenticated_client() -> httpx.AsyncClient:
-        headers = {}
-        try:
-            token = subprocess.check_output(
-                ["gcloud", "auth", "print-access-token"], 
-                text=True, stderr=subprocess.DEVNULL
-            ).strip()
-            headers["Authorization"] = f"Bearer {token}"
-        except Exception:
-            pass # Fallback for production service account environments
-        return httpx.AsyncClient(headers=headers, timeout=600.0)
+    class GoogleAuth(httpx.Auth):
+        """Custom HTTPX authentication handler that dynamically fetches and refreshes
+        Google OAuth access tokens for both local development (gcloud CLI) and
+        production (Application Default Credentials / Metadata Server).
+        """
+        def __init__(self) -> None:
+            self.credentials = None
+            self.auth_request = None
+            try:
+                import google.auth
+                self.credentials, _ = google.auth.default(
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+                import google.auth.transport.requests
+                self.auth_request = google.auth.transport.requests.Request()
+            except Exception as e:
+                logger.warning(f"Could not load Application Default Credentials: {e}")
+
+        def auth_flow(self, request: httpx.Request) -> Any:
+            token = None
+            try:
+                # 1. Local check: fetch token via gcloud CLI
+                token = subprocess.check_output(
+                    ["gcloud", "auth", "print-access-token"], 
+                    text=True, stderr=subprocess.DEVNULL
+                ).strip()
+            except Exception:
+                # 2. Production check: fetch and refresh token via official ADC libraries
+                if self.credentials:
+                    try:
+                        if not self.credentials.valid:
+                            self.credentials.refresh(self.auth_request)
+                        token = self.credentials.token
+                    except Exception as e:
+                        logger.error(f"Failed to refresh Application Default Credentials: {e}")
+            if token:
+                request.headers["Authorization"] = f"Bearer {token}"
+            yield request
     ```
-*   Pass this authenticated `httpx.AsyncClient` to the downstream `RemoteA2aAgent` instances.
+*   **Dynamic Client Instantiation**: We instantiate the HTTP client globally by passing this custom auth handler, ensuring it is permanently self-refreshing:
+    ```python
+    local_client = httpx.AsyncClient(auth=GoogleAuth(), timeout=600.0)
+    ```
 
 ### 4. Fixing the A2A Routing Context Leak
 When a parent agent delegates to a sub-agent using the A2A protocol, the ADK automatically compiles the parent agent's session events (e.g., `transfer_to_agent` tool calls) into `"For context: ..."` text blocks and appends them to the outgoing payload. 
