@@ -122,36 +122,50 @@ remote_a2a_agent.convert_a2a_task_to_event = my_convert_a2a_task_to_event
 logger.warning("🐒 Applied A2A Task Converter monkeypatch successfully!")
 # 🐒 -------------------------------------- 🐒
 
-def get_authenticated_client() -> httpx.AsyncClient:
-    """Helper to construct an authenticated httpx.AsyncClient for both local testing and production.
+class GoogleAuth(httpx.Auth):
+    """Custom HTTPX authentication handler that dynamically fetches and refreshes
+    Google OAuth access tokens for both local development (gcloud CLI) and
+    production (Application Default Credentials / Metadata Server).
     
-    1. Local: Dynamically fetches the active gcloud access token.
-    2. Production: Dynamically fetches the Application Default Credentials (ADC) token.
+    Ensures tokens never expire during long-running container lifecycles!
     """
-    headers = {}
-    try:
-        # Local development check: fetch token via gcloud CLI
-        token = subprocess.check_output(
-            ["gcloud", "auth", "print-access-token"], 
-            text=True, 
-            stderr=subprocess.DEVNULL
-        ).strip()
-        headers["Authorization"] = f"Bearer {token}"
-    except Exception:
-        # Production/Agent Runtime check: fetch token via official Google Auth ADC libraries
+    def __init__(self) -> None:
+        self.credentials = None
+        self.auth_request = None
         try:
-            import google.auth.transport.requests
-            credentials, _ = google.auth.default(
+            import google.auth
+            self.credentials, _ = google.auth.default(
                 scopes=["https://www.googleapis.com/auth/cloud-platform"]
             )
-            auth_request = google.auth.transport.requests.Request()
-            credentials.refresh(auth_request)
-            if credentials.token:
-                headers["Authorization"] = f"Bearer {credentials.token}"
+            import google.auth.transport.requests
+            self.auth_request = google.auth.transport.requests.Request()
         except Exception as e:
-            logger.warning(f"Failed to fetch production Application Default Credentials: {e}")
+            logger.warning(f"Could not load Application Default Credentials: {e}")
 
-    return httpx.AsyncClient(headers=headers, timeout=600.0)
+    def auth_flow(self, request: httpx.Request) -> Any:
+        token = None
+        
+        # 1. Try local gcloud CLI check first for backward compatibility
+        try:
+            token = subprocess.check_output(
+                ["gcloud", "auth", "print-access-token"], 
+                text=True, 
+                stderr=subprocess.DEVNULL
+            ).strip()
+        except Exception:
+            # 2. Fallback to official Google Auth ADC libraries
+            if self.credentials:
+                try:
+                    if not self.credentials.valid:
+                        self.credentials.refresh(self.auth_request)
+                    token = self.credentials.token
+                except Exception as e:
+                    logger.error(f"Failed to refresh Application Default Credentials: {e}")
+                    
+        if token:
+            request.headers["Authorization"] = f"Bearer {token}"
+            
+        yield request
 
 def load_agent_card(path_or_json: str) -> Any:
     """Helper to load agent card from a local path, a GCS path, or a raw JSON string.
@@ -193,7 +207,7 @@ def load_agent_card(path_or_json: str) -> Any:
     return AgentCard.model_validate(card_dict)
 
 # Build the client for local A2A call authentication
-local_client = get_authenticated_client()
+local_client = httpx.AsyncClient(auth=GoogleAuth(), timeout=600.0)
 
 async def clean_routing_context_interceptor(
     ctx: InvocationContext, 
