@@ -285,11 +285,13 @@ The entire flow was thoroughly verified in Gemini Enterprise using the **`BQ Orc
 *   **Out-of-Domain Rejection**: A query like *"What is the weather tonight?"* was correctly intercepted and rejected with: *"The agents do not have context to respond to this question. Please ask about NBA Player stats or MLB Club Fan experience."* (Verifying the container logic is fully active).
 *   **Sports Analytics Delegation**: A query like *"Which player had the highest point average in the 2018-19 NBA season?"* successfully bypassed all security gateways, generated the BigQuery SQL query, executed it, and returned the verified sports statistics to the chat UI!
 
----
+### 8. Extending to Agent Runtime (Reasoning Engine) & Platform Limitations
+Because both Cloud Run and Agent Runtime share the exact same [app/agent.py](file:///Users/ferozmulla/Desktop/smart-coder/bq-orchestrator-agent/app/agent.py) codebase, the Agent Runtime version is technically fully patched and its card is 100% clean. All database, companion, and delegation permissions granted to the application service account will carry over to the Reasoning Engine automatically.
 
-### 8. Extending to Agent Runtime (Reasoning Engine)
-Because `app/agent.py` is shared, the **Agent Runtime** version is now *also* fully patched and prepared to work!
-1.  The Agent Runtime card is now automatically compiled with the sanitized skill names.
-2.  All database, companion, and delegation permissions granted to the application service account will automatically apply to the Reasoning Engine execution context.
-3.  **To activate**: Refresh your Gemini Enterprise browser tab, start a new chat session, and select the **`BQ Orchestrator (Agent Runtime)`** agent. It is now fully equipped to route and query just like the Cloud Run version!
+However, during end-to-end testing in Gemini Enterprise, we identified a **critical platform-level routing constraint**:
+*   **The Tenant Proxy Limitation**: Unlike Cloud Run (which exposes a direct, standard HTTPS route in your own project), Vertex AI Reasoning Engines are hosted inside a Google-managed internal tenant project and exposed via a multi-layered API proxy. 
+*   **The Bug**: Because A2A support on Agent Runtime is currently marked as experimental in the ADK, the Google-internal Vertex AI gateway proxy has a routing bug where it successfully routes card metadata requests (`GET /a2a/v1/card`), but **silently drops conversational requests (`POST /a2a/v1/message:send`)** before they can cross the tenant boundary and reach the container. This causes the Gemini Enterprise UI to spin forever.
+
+#### 📢 Production Recommendation
+For this reason, **Cloud Run is the designated, stable, and recommended production target** for A2A orchestrators. The Agent Runtime target should be treated as an experimental preview until Google stabilizes the internal API gateway proxy routing for Reasoning Engine A2A endpoints.
 
